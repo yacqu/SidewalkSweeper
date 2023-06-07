@@ -1,1 +1,0 @@
-This is a set of code meant to read a single remote control channel over IBUS and i2c. The reciever is hooked up to an arduino nano which then communicates to an arduino due over i2c. Lastly the due prints to the serial terminal.
