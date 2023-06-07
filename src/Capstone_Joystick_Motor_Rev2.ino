@@ -1,7 +1,12 @@
+//declare joystick pins (v denoting vertical and h denoting horizontal)
 int joystickv = 3;
 int joystickh = 2;
+
+//setup variables to hold joystick status (v denoting vertical and h denoting horizontal)
 int durationv;
 int durationh;
+
+//setup variables to hold desire motor power (L and R denoting left and right respectively)
 int pwrL;
 int pwrR;
 
@@ -20,11 +25,10 @@ int joystick_neutral = 1490;
 int joystick_high = 2000;
 int deadzone = 30;
 
-int pwr = 0;
-int pwrb = 0;
-
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(9600); //open serial line to for debugging
+  
+  //set joystick pins as input
   pinMode(joystickv, INPUT);
   pinMode(joystickh, INPUT);
 
@@ -44,6 +48,7 @@ void loop() {
   durationh = pulseIn(joystickh, HIGH);
 
   /*
+  //debug, display raw PWM signals
   Serial.println();
   Serial.print("raw_vert: ");
   Serial.println(durationv);
@@ -51,25 +56,28 @@ void loop() {
   Serial.println(durationh);
   */
 
-  //convert to range from -255 to 255
+  //convert PWM signal to range from -255 to 255
   durationv = map(durationv, joystick_low, joystick_high, -255, 255); //on my controller I have Ch1 inverted, thus the weird mapping
   durationh = map(durationh, joystick_low, joystick_high, 255, -255);
 
   //convert joystick signals to motor power
-  pwrL = (durationv+durationh);
-  pwrR = (durationv-durationh);
+  //average accordingly
+  pwrL = (durationv+durationh)/2;
+  pwrR = (durationv-durationh)/2;
+  
+  //the motors only get full power if the joystick is in a corner, so we will double the signal and "lop off the top" so that when the stick is forward it is able to go at full power
+  //yes, I know this is shoddy
+  pwrL = constrain(2*pwrL,-255,255);
+  pwrR = constrain(2*pwrR,-255,255);
 
-  pwrL = constrain(pwrL,-255,255);
-  pwrR = constrain(pwrR,-255,255);
-
+  //debug, display prescribed motor power
   Serial.print("PwrL: ");
   Serial.println(pwrL);
   Serial.print("PwrR: ");
   Serial.println(pwrR);
   
-  /*Serial.print("Mag: ");
-  Serial.println(magnitude);
   /*
+  //debug, display conditioned PWM signals
   Serial.print("vert: ");
   Serial.println(durationv);
   Serial.print("horz: ");
