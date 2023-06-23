@@ -39,6 +39,10 @@ int countRB = 0;
 int stick_ch1 = 2; // Left/Right
 int stick_ch2 = 3; // FWD/Back
 
+//create variables to store radio channels pulsewidths
+volatile unsigned long ch1Pulsewidth;
+volatile unsigned long ch2Pulsewidth;
+
 // Define Joystick Zones/Bounds
 int joystick_low = 995;
 int joystick_neutral = 1490;
@@ -62,12 +66,11 @@ void setup() {
   pinMode(encRA, INPUT);
   pinMode(encRB, INPUT);
 
-  //intialize interrupt pins
-  //attachInterrupt(digitalPinToInterrupt(encLA), incLA, RISING);
-  //attachInterrupt(digitalPinToInterrupt(encLB), incLB, RISING);
-
-  //attachInterrupt(digitalPinToInterrupt(encRA), incRA, RISING);
-  //attachInterrupt(digitalPinToInterrupt(encRB), incRB, RISING);
+  //intialize encoder input/interrupt pins
+  pinMode(stick_ch1, INPUT);              // Set the input pin
+  attachInterrupt(digitalPinToInterrupt(stick_ch1), Readch1Pulsewidth, CHANGE);   // Run the calcPulsewidth function on signal CHANGE
+  pinMode(stick_ch2, INPUT);              // Set the input pin
+  attachInterrupt(digitalPinToInterrupt(stick_ch2), Readch2Pulsewidth, CHANGE);   // Run the calcPulsewidth function on signal CHANGE
   
   // Turn off motors - Initial state
   digitalWrite(inL1, LOW);
@@ -89,45 +92,31 @@ void setup() {
 
 void loop() {
   int ch1 = readpwm(stick_ch1); //read Left/Right Channel
-  //int ch2 = readpwm(stick_ch2); //read Fwd/Back Channel
-  int ch2 = 0;
-  
-  //Serial.print("pwrL: ");
-  //Serial.println(ch1);
-  //Serial.print("pwrR: ");
-  //Serial.println(ch2);
-  
+  int ch2 = readpwm(stick_ch2); //read Fwd/Back Channel
+
+  //print the post-processed PWM signals to console (DEBUG)
+//  Serial.print(ch1);
+//  Serial.print(",");
+//  Serial.println(ch2);
+//  
   //setup variables to hold motor power level (PLACEHOLDER VALUES)
   int pwrL = 0;
   int pwrR = 0;
-
-  /*
-  int side_sign
-  if(ch1 >= 0){
-    side_sign = 1;
-  }
-  else if(ch1 < 0){
-    side_sign = -1;
-  }
-  float side = map(abs(ch1), 0, 255, 1, 0.5); //remap absolute value of the ch1 signal to 1-0.5
-  side = side_sign*side; //reattach the sign to side. (So, if its at neutral it should = 1
-  */
   
-  pwrL = ch1+ch2; //apply pwr and side bias to Left motor
-  pwrR = ch1-ch2; //apply pwr and side bias to Right motor
+  pwrL = ch2+ch1; //apply pwr and side bias to Left motor
+  pwrR = ch2-ch1; //apply pwr and side bias to Right motor
 
-  //constrain pwr levels
-  pwrL = constrain(pwrL, 0, 255);
-  pwrR = constrain(pwrR, 0, 255);
+  //constrain pwr levels and reverse
+  pwrL = -1*constrain(pwrL, -255, 255);
+  pwrR = -1*constrain(pwrR, -255, 255);
   
   motor_run("L", pwrL); //send power level to left motor
   motor_run("R", pwrR); //send power level to right motor
 
-  /*
-  Serial.print("pwrL: ");
-  Serial.println(pwrL);
-  Serial.print("pwrR: ");
-  Serial.println(pwrR);*/
+  //print motor power to console (DEBUG)
+  Serial.print(pwrL);
+  Serial.print(",");
+  Serial.println(pwrR);
 }
 
 //setup  function to send power level to motors
@@ -168,11 +157,16 @@ void motor_run(String motor, int pwr){
 //reads the stick using pulsein then applies the deadzones to output a value between +/- 255
 //TO DO: optimize the size of these variables
 int readpwm(int stick){
-  int duration = pulseIn(stick, HIGH); //read joystick raw pwm signal
-  int sign; //create variable to store joystick direction
-
-  Serial.println(duration); //problems start here
+  int duration = 0;
+  if(stick == stick_ch1){//write the appropriate pulsewidth of the appropriate channel
+    duration = ch1Pulsewidth; //read joystick 1 raw pwm signal
+  }
+  else if(stick == stick_ch2){
+    duration = ch2Pulsewidth; //read joystick 2 raw pwm signal
+  }
   
+  int sign = 0; //create variable to store joystick direction
+
   //check direction of joystick
   if(duration < joystick_neutral){
     sign = -1;
@@ -194,6 +188,7 @@ int readpwm(int stick){
 
 
 //setup functions to run on interrupt pins
+//make function to increment left encodere
 void incLA(){
   if(digitalRead(encLB) == HIGH){
     counterL++;
@@ -203,12 +198,42 @@ void incLA(){
   }
 }
 
-
+//make function to increment right encoder
 void incRA(){
   if(digitalRead(encRB) == HIGH){
     counterR++;
   }
   else{
     counterR--;
+  }
+}
+
+//make function to find pulsewidth on radio channel 1
+void Readch1Pulsewidth() //Source:https://forum.arduino.cc/t/pwm-reading-with-due/896453/5
+{
+  static unsigned long ch1StartTime;   // Start time variable
+  
+  if (digitalRead(stick_ch1) == HIGH)    // If the change was a RISING edge
+  {
+    ch1StartTime = micros();           // Store the start time (in microseconds)
+  }
+  else                                   // If the change was a FALLING edge
+  {        
+    ch1Pulsewidth = micros() - ch1StartTime;    // Calculate the pulsewidth
+  }
+}
+
+//make function to find pulsewidth on radio channel 2
+void Readch2Pulsewidth() //Source:https://forum.arduino.cc/t/pwm-reading-with-due/896453/5
+{
+  static unsigned long ch2StartTime;   // Start time variable
+  
+  if (digitalRead(stick_ch2) == HIGH)    // If the change was a RISING edge
+  {
+    ch2StartTime = micros();           // Store the start time (in microseconds)
+  }
+  else                                   // If the change was a FALLING edge
+  {        
+    ch2Pulsewidth = micros() - ch2StartTime;    // Calculate the pulsewidth
   }
 }
