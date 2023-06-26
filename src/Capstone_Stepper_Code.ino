@@ -32,6 +32,6 @@ void loop() {
   
   while (digitalRead(10) == LOW) {
   
-  // Do nothing
+  // Do nothing 
   }
 }

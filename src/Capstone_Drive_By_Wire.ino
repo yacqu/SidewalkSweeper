@@ -49,11 +49,25 @@ int joystick_neutral = 1490;
 int joystick_high = 1990;
 int deadzone = 25;
 
+// adding stepper motor code
+#include <AccelStepper.h>
+
+// Define pin connections
+const int dirPin = 52;  // white wire
+const int stepPin = 50;  // blue wire
+
+// Define motor interface type
+#define motorInterfaceType 1
+
+// Creates an instance
+AccelStepper myStepper(motorInterfaceType, stepPin, dirPin);
+
 void setup() {
   Serial.begin (115200); //open serial terminal (Debug)
   Serial.print("STARTUP!");
   
   // Set all the motor control pins to outputs
+  pinMode(10, INPUT_PULLUP);
   pinMode(inL1, OUTPUT);
   pinMode(inL2, OUTPUT);
   pinMode(enL, OUTPUT);
@@ -112,6 +126,10 @@ void loop() {
   
   motor_run("L", pwrL); //send power level to left motor
   motor_run("R", pwrR); //send power level to right motor
+
+  // run the stepper motor with no user input
+  // TODO: interface with the remotor controller
+  runStepper()
 
   //print motor power to console (DEBUG)
   Serial.print(pwrL);
@@ -237,3 +255,26 @@ void Readch2Pulsewidth() //Source:https://forum.arduino.cc/t/pwm-reading-with-du
     ch2Pulsewidth = micros() - ch2StartTime;    // Calculate the pulsewidth
   }
 }
+
+
+void runStepper() {
+    // set the maximum speed, acceleration factor,
+  // initial speed and the target position
+  
+  myStepper.setMaxSpeed(1000);
+  myStepper.setAcceleration(50);
+  myStepper.setSpeed(600);
+  myStepper.moveTo(400);
+  
+  // Change direction once the motor reaches target position
+  if (myStepper.distanceToGo() == 0) 
+    myStepper.moveTo(-myStepper.currentPosition());
+  // Move the motor one step
+  myStepper.run();
+  
+  while (digitalRead(10) == LOW) {
+  
+  // Do nothing 
+  }
+}
+
