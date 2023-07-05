@@ -1,11 +1,11 @@
 #include <Servo.h>
 #include <AccelStepper.h>
 //TO DO: optimize the size of these variables (for example ints for connections could be Bytes)
-//TO DO: optionally make pwm levels an array so as to condense the four functions and streamline post processing
 
 // Define stepper pin connections
 const int dirPin = 52;
 const int stepPin = 50;
+const int stepen = 48; //set stpper enable pin
 // Creates an instance
 AccelStepper myStepper(1, stepPin, dirPin);
 
@@ -14,13 +14,13 @@ int in1 = 35;
 int in2 = 33;
 int en = 37;
 
-//Left Encoder COnnections
+//Left Encoder Connections
 int encLA = 10;
 int encLB = 11;
 
 //Right Encoder Connections
-int encRA = 12;
-int encRB = 13;
+int encRA = 13;
+int encRB = 12;
 
 //Setup Variables for left encoders
 int counterL = 0; 
@@ -38,17 +38,25 @@ int aLastStateR;
 int countRA = 0;
 int countRB = 0;
 
+int motor_const = 188; //define encoder counts per revolution (found empirically)
+
 //define remote channels
 int stick_ch1 = 2; // Left/Right
 int stick_ch2 = 3; // FWD/Back
-int stick_ch3 = 4; // Brush Motor (Pin TBD)
+int stick_ch3 = 4; // Autonomous Trigger
 int stick_ch4 = 5; // Stepper Angle
+int stick_ch5 = 6; // Brush Motor
+int stick_ch6 = 27; //speed limiter pin
 
 //create variables to store radio channels pulsewidths
 volatile unsigned long ch1Pulsewidth;
 volatile unsigned long ch2Pulsewidth;
 volatile unsigned long ch3Pulsewidth;
 volatile unsigned long ch4Pulsewidth;
+volatile unsigned long ch5Pulsewidth;
+volatile unsigned long ch6Pulsewidth;
+
+int ch3_last = 0;
 
 // Define Joystick Zones/Bounds
 int joystick_low = 995;
@@ -61,8 +69,8 @@ Servo left_motor;  // create servo object to control left motor
 Servo right_motor;  // create servo object to control right motor
 
 //define "Servo" pins for left and right motors
-int left_motor_pin = 6;
-int right_motor_pin = 7;
+int left_motor_pin = 8;
+int right_motor_pin = 9;
 
 void setup() {
   Serial.begin (115200); //open serial terminal (Debug)
@@ -95,6 +103,14 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(stick_ch3), Readch3Pulsewidth, CHANGE);   // Run the calcPulsewidth function on signal CHANGE
   pinMode(stick_ch4, INPUT);              // Set the input pin
   attachInterrupt(digitalPinToInterrupt(stick_ch4), Readch4Pulsewidth, CHANGE);   // Run the calcPulsewidth function on signal CHANGE
+  pinMode(stick_ch5, INPUT);              // Set the input pin
+  attachInterrupt(digitalPinToInterrupt(stick_ch5), Readch5Pulsewidth, CHANGE);   // Run the calcPulsewidth function on signal CHANGE
+  pinMode(stick_ch6, INPUT);              // Set the input pin
+  attachInterrupt(digitalPinToInterrupt(stick_ch6), Readch6Pulsewidth, CHANGE);   // Run the calcPulsewidth function on signal CHANGE
+
+  //attach interrupt functions to encoder pins
+  attachInterrupt(digitalPinToInterrupt(encLA), incLA, RISING);
+  attachInterrupt(digitalPinToInterrupt(encRA), incRA, RISING);
   
   // Turn off brush motor - Initial state
   digitalWrite(in1, LOW);
@@ -109,48 +125,101 @@ void setup() {
   myStepper.setMaxSpeed(5000);
   myStepper.setAcceleration(5000);
   myStepper.setSpeed(0);
+  pinMode(stepen, OUTPUT);
+
+  Serial.print("Setup Complete");
 }
 
 void loop() {
   int ch1 = readpwm(stick_ch1); //read Left/Right Channel
   int ch2 = readpwm(stick_ch2); //read Fwd/Back Channel
-  int ch3 = readpwm(stick_ch3); //read Brush Motor Channel
+  int ch3 = readpwm(stick_ch3); //read Autonomous Trigger Channel
   int ch4 = readpwm(stick_ch4); //read Stepper angle Channel
+  int ch5 = readpwm(stick_ch5); //read Brush motor Channel
+  int ch6 = readpwm(stick_ch6); //read Brush motor Channel
 
-  myStepper.setSpeed(ch4*2); //set the stepper speed
-  myStepper.runSpeed(); //update the stepper speed
-  Serial.println(ch4);
+  //calculate the speed limit factor
+  float fwd_speed_limit = map(ch6,-270,270,8,100)*0.01; //map only works with intergers so we multiply our desired range by 100 (50-100) then divide it at the end to the desired a decimal (0.5-1.0)
+  float rev_speed_limit = map(ch6,-270,270,30,100)*0.01;
+  
+  if(ch3 > 0){  //check for autonomous trigger
+    if(ch3_last == 0){ //I don't know why this didn't work as an AND statement with the previous line
+      ch3_last = 1; //set the state tracking variable so it only triggers once per switch on
+      Serial.println("Autonomous Triggered!");
+      forward(4); //drive forward 4 feet
+      turn(180); //turn 180 degrees
+      forward(4); //drive forward 4 feet
+      turn(180); //turn 180 degrees
+      Serial.println("Autonomous Complete!");
+    }
+  }
+  else{
+    ch3_last = 0; //reset the state tracking variable
+  }
 
+  //print encoder statuses (DEBUG)
+  //Serial.print(counterL);
+  //Serial.print(",");
+  //Serial.println(counterR);
 
+  if(abs((ch4-joystick_neutral)) > deadzone){ //if the signal varies from  neutral by more than the deadzone, send a speed
+    digitalWrite(stepen,HIGH); //enable the stepper
+    myStepper.setSpeed(ch4*2); //set the stepper speed
+    myStepper.runSpeed(); //update the stepper speed
+  }
+  else{ //otherwise send nothing
+    digitalWrite(stepen,LOW); //disable the stepper
+    myStepper.setSpeed(0); //set the stepper speed
+    myStepper.runSpeed(); //update the stepper speed
+  }
+  
+  //Serial.println(ch4);
+  
   //print the post-processed PWM signals to console (DEBUG)
 //  Serial.print(ch1);
 //  Serial.print(",");
 //  Serial.println(ch2);
-//  
+  
   //setup variables to hold motor power level (PLACEHOLDER VALUES)
   int pwrL = 0;
   int pwrR = 0;
   
-  pwrL = ch2+ch1; //apply pwr and side bias to Left motor
-  pwrR = ch2-ch1; //apply pwr and side bias to Right motor
+  pwrR = ch2-ch1; //apply pwr and side bias to Left motor
+  pwrL = ch2+ch1; //apply pwr and side bias to Right motor
 
   //constrain pwr levels and reverse
-  pwrL = -1*constrain(pwrL, -255, 255);
-  pwrR = -1*constrain(pwrR, -255, 255);
+  pwrR = constrain(pwrR, -255, 255);
+  pwrL = constrain(pwrL, -255, 255);
 
-  pwrL = map(-1*pwrL,-255,255,20,160);
-  pwrR = map(-1*pwrR,-255,255,20,160);
+  //Apply power limits, nees if statement so as to apply different coefficients for fwd and reverse
+  if(pwrR > 0){
+    pwrR = int(pwrR*fwd_speed_limit);
+  }
+  else{
+    pwrR = int(pwrR*rev_speed_limit);
+  }
+  if(pwrL > 0){
+    pwrL = int(pwrL*fwd_speed_limit);
+  }
+  else{
+    pwrL = int(pwrL*rev_speed_limit);
+  }
+
+  //remap power levels to motor controller range
+  pwrR = map(pwrR,-255,255,20,160);
+  pwrL = map(pwrL,-255,255,20,160);
   
   left_motor.write(pwrL);
   right_motor.write(pwrR);
   
-  brush_run(ch3); //send power level to brush motor
+  brush_run(ch5); //send power level to brush motor
+  
   //motor_run("R", pwrR); //send power level to right motor
 
   //print motor power to console (DEBUG)
-  //Serial.print(pwrL);
-  //Serial.print(",");
-  //Serial.println(pwrR);
+  Serial.print(pwrL);
+  Serial.print(",");
+  Serial.println(pwrR);
 }
 
 //setup  function to send power level to motors
@@ -171,6 +240,87 @@ void brush_run(int pwr){
   analogWrite(en, abs(pwr));
 }
 
+//create function to drive forward at a set distance (Dictated by argument)
+void forward(int dist){
+  if(readpwm(stick_ch3) > 0){ //do the follwoing if autonomous is still enabled
+    counterL = 0;
+    counterR = 0;
+  
+    //Serial.println(dist); //DEBUG
+    float target = dist * motor_const *12 /(3.1415 * 8); //calculate the encoder turns (explained in next line)
+    // multiply the desired length * pi * wheel diameter converted to feet, this gives desired number of rotations. Multiply this by motor constant to get encoder counts required for the distance
+    //Serial.println(target); //DEBUG
+  
+    while(((counterL + counterR)/2) < target){ //while the average encoder counts are less than the target, do the following
+       if(readpwm(stick_ch3) < 0){ //check that autoonomous is still enabled
+        right_motor.write(90);
+        left_motor.write(90);
+        break;
+       }
+       if(counterL == counterR){ //if the encoders are equal (going straight), set to equal speed
+        left_motor.write(100);
+        right_motor.write(100);
+       }
+       else if(counterL > counterR){ //if left side is higher (turning right), slow down left side
+        left_motor.write(95);
+        right_motor.write(100);
+       }
+       else if(counterL < counterR){ //if right side is higher (turning left), slow down right side
+        left_motor.write(100);
+        right_motor.write(95);
+       }
+    }
+  }      
+  //stop motors if autonomous is still enabled
+  if(readpwm(stick_ch3) > 0){
+    left_motor.write(20);
+    right_motor.write(20);
+    delay(350);
+    left_motor.write(90);
+    right_motor.write(90);
+    delay(500);
+  }
+  else{ //if autonomous is disabled, reset motors
+    right_motor.write(90);
+    left_motor.write(90);
+  }
+}
+
+//create function to turn right at a set angle (Dictated by argument)
+void turn(int angle){
+  if(readpwm(stick_ch3) > 0){
+    //reset counters
+    counterL = 0;
+    counterR = 0;
+      
+    right_motor.write(60);
+    while(abs(counterL-counterR) < 1.95*angle){
+      if(readpwm(stick_ch3) < 0){ //check that autoonomous is still enabled
+        right_motor.write(90);
+        left_motor.write(90);
+        break;
+       }
+      left_motor.write(105);
+    }
+    
+    //stop motors if autonomous is still enabled
+    if(readpwm(stick_ch3) > 0){
+      right_motor.write(100);
+      delay(100);
+      left_motor.write(20);
+      right_motor.write(20);
+      delay(300);
+      right_motor.write(90);
+      left_motor.write(90);
+      delay(500);
+    }
+  }
+  else{ //if autonomous is disabled, reset motors
+    right_motor.write(90);
+    left_motor.write(90);
+  }
+}
+
 //setup function to read radio PWM lines (This is SUBOPTIMAL)
 //Takes input of stick to check. Outputs the stick status as an interger
 //reads the stick using pulsein then applies the deadzones to output a value between +/- 255
@@ -188,6 +338,12 @@ int readpwm(int stick){
   }
   else if(stick == stick_ch4){
     duration = ch4Pulsewidth; //read joystick 4 raw pwm signal
+  }
+  else if(stick == stick_ch5){
+    duration = ch5Pulsewidth; //read joystick 4 raw pwm signal
+  }
+  else if(stick == stick_ch6){
+    duration = ch6Pulsewidth; //read joystick 4 raw pwm signal
   }
   
   int sign = 0; //create variable to store joystick direction
@@ -290,5 +446,35 @@ void Readch4Pulsewidth() //Source:https://forum.arduino.cc/t/pwm-reading-with-du
   else                                   // If the change was a FALLING edge
   {        
     ch4Pulsewidth = micros() - ch4StartTime;    // Calculate the pulsewidth
+  }
+}
+
+//make function to find pulsewidth on radio channel 5
+void Readch5Pulsewidth() //Source:https://forum.arduino.cc/t/pwm-reading-with-due/896453/5
+{
+  static unsigned long ch5StartTime;   // Start time variable
+  
+  if (digitalRead(stick_ch5) == HIGH)    // If the change was a RISING edge
+  {
+    ch5StartTime = micros();           // Store the start time (in microseconds)
+  }
+  else                                   // If the change was a FALLING edge
+  {        
+    ch5Pulsewidth = micros() - ch5StartTime;    // Calculate the pulsewidth
+  }
+}
+
+//make function to find pulsewidth on radio channel 6
+void Readch6Pulsewidth() //Source:https://forum.arduino.cc/t/pwm-reading-with-due/896453/5
+{
+  static unsigned long ch6StartTime;   // Start time variable
+  
+  if (digitalRead(stick_ch6) == HIGH)    // If the change was a RISING edge
+  {
+    ch6StartTime = micros();           // Store the start time (in microseconds)
+  }
+  else                                   // If the change was a FALLING edge
+  {        
+    ch6Pulsewidth = micros() - ch6StartTime;    // Calculate the pulsewidth
   }
 }
